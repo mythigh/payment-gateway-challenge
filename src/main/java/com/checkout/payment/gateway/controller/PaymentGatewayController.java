@@ -62,10 +62,15 @@ public class PaymentGatewayController {
       @ApiResponse(responseCode = "201", description = "Payment processed",
         headers = @Header(name = "X-Correlation-ID", description = "Request correlation ID"),
         content = @Content(schema = @Schema(implementation = PostPaymentResponse.class))),
-      @ApiResponse(responseCode = "400", description = "Malformed JSON request",
+      @ApiResponse(responseCode = "400", description = "Malformed JSON or failed business validation",
         headers = @Header(name = "X-Correlation-ID", description = "Request correlation ID"),
-          content = @Content(schema = @Schema(implementation = ErrorResponse.class),
-            examples = @ExampleObject(value = "{\"message\":\"Malformed payment request\"}"))),
+          content = @Content(schema = @Schema(oneOf = {PostPaymentResponse.class, ErrorResponse.class}),
+            examples = {
+              @ExampleObject(name = "Malformed request",
+                value = "{\"message\":\"Malformed payment request\"}"),
+              @ExampleObject(name = "Rejected payment",
+                value = "{\"id\":\"b30f8b27-6bf5-4e4a-bf6b-e69ac0b46a22\",\"status\":\"Rejected\",\"cardNumberLastFour\":\"1111\",\"expiryMonth\":12,\"expiryYear\":2027,\"currency\":\"GBP\",\"amount\":100}")
+            })),
       @ApiResponse(responseCode = "500", description = "Bank contract error or unexpected gateway error",
         headers = @Header(name = "X-Correlation-ID", description = "Request correlation ID"),
           content = @Content(schema = @Schema(implementation = ErrorResponse.class), examples = {
@@ -83,7 +88,10 @@ public class PaymentGatewayController {
   public ResponseEntity<PostPaymentResponse> processPayment(
       @io.swagger.v3.oas.annotations.parameters.RequestBody(required = true,
         description = "Payment details") @RequestBody PostPaymentRequest paymentRequest) {
-    return new ResponseEntity<>(paymentGatewayService.processPayment(paymentRequest),
-        HttpStatus.CREATED);
+    PostPaymentResponse payment = paymentGatewayService.processPayment(paymentRequest);
+    HttpStatus status = payment.getStatus() == com.checkout.payment.gateway.enums.PaymentStatus.REJECTED
+        ? HttpStatus.BAD_REQUEST
+        : HttpStatus.CREATED;
+    return new ResponseEntity<>(payment, status);
   }
 }

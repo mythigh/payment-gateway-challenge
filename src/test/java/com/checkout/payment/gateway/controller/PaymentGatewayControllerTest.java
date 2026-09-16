@@ -142,7 +142,7 @@ class PaymentGatewayControllerTest {
     mvc.perform(MockMvcRequestBuilders.post("/api/v1/payments")
             .contentType(MediaType.APPLICATION_JSON)
             .content(validPaymentJson("411")))
-        .andExpect(status().isCreated())
+      .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.status").value("Rejected"))
         .andExpect(jsonPath("$.cardNumberLastFour").doesNotExist());
   }

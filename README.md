@@ -101,7 +101,7 @@ sequenceDiagram
   Caller->>Gateway: POST /payments
   Gateway->>Gateway: Validate request
   alt Invalid business data
-    Gateway-->>Caller: 201 REJECTED
+    Gateway-->>Caller: 400 REJECTED
   else Valid request
     Gateway->>BankClient: Make payment
     BankClient->>Bank: POST /payments
@@ -114,13 +114,26 @@ sequenceDiagram
 
 Malformed JSON is rejected before the controller processes the request and returns `400 Bad Request`. A bank communication failure returns a gateway error and is not persisted.
 
+## Bank Simulator Contract
+
+The gateway depends on the simulator defined in [imposters/bank_simulator.ejs](imposters/bank_simulator.ejs). This is an integration contract, not the public API surface, but it is important to understand the gateway behaviour.
+
+| Simulator condition | HTTP response | Gateway interpretation |
+| --- | --- | --- |
+| Required fields missing | `400 Bad Request` | `500 Internal Server Error` at the gateway layer because it indicates an upstream contract/integration problem. |
+| Card number ends with odd digit (`1,3,5,7,9`) | `200 OK` with `authorized: true` | Gateway maps to `AUTHORIZED`. |
+| Card number ends with even digit (`2,4,6,8`) | `200 OK` with `authorized: false` | Gateway maps to `DECLINED`. |
+| Card number ends with zero (`0`) | `503 Service Unavailable` | Gateway maps this dependency failure to `503 Service Unavailable` for the caller. |
+
+This contract explains why the gateway does not treat every bank failure as a malformed-request issue and why a bank response can legitimately produce a `DECLINED` outcome rather than an HTTP error.
+
 ## API
 
 The application exposes versioned public endpoints under `/api/v1`.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/v1/payments` | Validates and processes a payment request. Returns `201 Created` with the stored payment result. |
+| `POST` | `/api/v1/payments` | Validates and processes a payment request. Returns `201 Created` for authorized/declined outcomes or `400 Bad Request` for rejected validation. |
 | `GET` | `/api/v1/payment/{id}` | Returns an existing payment by gateway UUID. Returns `200 OK` when the record exists. |
 
 Full endpoint schemas and interactive requests are available at [Swagger UI](http://localhost:8091/swagger-ui/index.html).
@@ -197,13 +210,13 @@ Error responses use this shape:
 
 | HTTP status | Condition | Response message | Caller action |
 | --- | --- | --- | --- |
-| `400 Bad Request` | Malformed JSON or wrong JSON field type. | `Malformed payment request` | Correct the JSON shape and field types, then retry. |
+| `400 Bad Request` | Malformed JSON, wrong JSON field type, or failed business validation. | `Malformed payment request` or a `Rejected` payment response. | Correct the JSON shape or payment data, then retry. |
 | `404 Not Found` | No payment exists for the requested ID. | `Page not found` | Confirm the payment UUID. Do not retry unchanged. |
 | `500 Internal Server Error` | The bank returned a `4xx` response or returned a malformed response, indicating an integration-contract fault. | `Unable to process payment with the acquiring bank` | Do not repeatedly retry. Investigate the request/bank contract with the correlation ID. |
 | `500 Internal Server Error` | Unexpected gateway error. | `Unable to process payment` | Capture the correlation ID and investigate logs. |
 | `503 Service Unavailable` | Bank `5xx` response, timeout, or connection failure. | `Unable to process payment with the acquiring bank` | Retry later using normal backoff. |
 
-Business-validation failures are not HTTP errors: the gateway returns `201 Created` with `status: "Rejected"` and does not contact the bank.
+Business-validation failures return `400 Bad Request` with `status: "Rejected"` and do not contact the bank. Malformed JSON also returns `400`, but uses the `ErrorResponse` shape.
 
 ## Configuration
 
